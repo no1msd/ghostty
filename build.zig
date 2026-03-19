@@ -142,6 +142,12 @@ pub fn build(b: *std.Build) !void {
             libghostty_shared.installHeader(); // Only need one header
             libghostty_shared.install("libghostty.so");
             libghostty_static.install("libghostty.a");
+
+            // Register the shared lib as a build artifact so downstream
+            // dependencies can find it via artifact("ghostty").
+            if (libghostty_shared.compile) |compile| {
+                b.installArtifact(compile);
+            }
         }
     }
 

@@ -165,15 +165,10 @@ pub fn surfaceInit(surface: *apprt.Surface) !void {
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
 
-        // GTK uses global OpenGL context so we load from null.
+        // GTK and embedded use global OpenGL context so we load from null.
         apprt.gtk,
+        apprt.embedded,
         => try prepareContext(null),
-
-        apprt.embedded => {
-            // TODO(mitchellh): this does nothing today to allow libghostty
-            // to compile for OpenGL targets but libghostty is strictly
-            // broken for rendering on this platforms.
-        },
     }
 
     // These are very noisy so this is commented, but easy to uncomment
@@ -201,17 +196,13 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
 
-        apprt.gtk => {
-            // GTK doesn't support threaded OpenGL operations as far as I can
-            // tell, so we use the renderer thread to setup all the state
-            // but then do the actual draws and texture syncs and all that
-            // on the main thread. As such, we don't do anything here.
-        },
-
-        apprt.embedded => {
-            // TODO(mitchellh): this does nothing today to allow libghostty
-            // to compile for OpenGL targets but libghostty is strictly
-            // broken for rendering on this platforms.
+        apprt.gtk,
+        apprt.embedded,
+        => {
+            // GTK (and embedded embedders managing their own GL context)
+            // don't support threaded OpenGL operations, so we use the
+            // renderer thread to setup all the state but then do the actual
+            // draws and texture syncs on the main thread.
         },
     }
 }
@@ -223,13 +214,10 @@ pub fn threadExit(self: *const OpenGL) void {
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
 
-        apprt.gtk => {
-            // We don't need to do any unloading for GTK because we may
-            // be sharing the global bindings with other windows.
-        },
-
-        apprt.embedded => {
-            // TODO: see threadEnter
+        apprt.gtk,
+        apprt.embedded,
+        => {
+            // No unloading needed — we may be sharing global bindings.
         },
     }
 }
@@ -238,14 +226,16 @@ pub fn displayRealized(self: *const OpenGL) void {
     _ = self;
 
     switch (apprt.runtime) {
-        apprt.gtk => prepareContext(null) catch |err| {
+        apprt.gtk,
+        apprt.embedded,
+        => prepareContext(null) catch |err| {
             log.warn(
                 "Error preparing GL context in displayRealized, err={}",
                 .{err},
             );
         },
 
-        else => @compileError("only GTK should be calling displayRealized"),
+        else => @compileError("unsupported app runtime for displayRealized"),
     }
 }
 

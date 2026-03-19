@@ -26,6 +26,10 @@ const log = std.log.scoped(.embedded_window);
 pub const resourcesDir = internal_os.resourcesDir;
 
 pub const App = struct {
+    /// The embedded apprt relies on the host to manage the GL context on
+    /// the main/app thread, so drawing must be dispatched there.
+    pub const must_draw_from_app_thread = true;
+
     /// Because we only expect the embedding API to be used in embedded
     /// environments, the options are extern so that we can expose it
     /// directly to a C callconv and not pay for any translation costs.
@@ -343,6 +347,7 @@ pub const App = struct {
 pub const Platform = union(PlatformTag) {
     macos: MacOS,
     ios: IOS,
+    none: void,
 
     // If our build target for libghostty is not darwin then we do
     // not include macos support at all.
@@ -385,6 +390,8 @@ pub const Platform = union(PlatformTag) {
                     break :ios error.UIViewMustBeSet);
                 break :ios .{ .ios = .{ .uiview = uiview } };
             } else error.UnsupportedPlatform,
+
+            .none => .{ .none = {} },
         };
     }
 };
@@ -395,6 +402,7 @@ pub const PlatformTag = enum(c_int) {
 
     macos = 1,
     ios = 2,
+    none = 3,
 };
 
 pub const EnvVar = extern struct {
@@ -1688,6 +1696,25 @@ pub const CAPI = struct {
     /// call as soon as possible (NOW if possible).
     export fn ghostty_surface_draw(surface: *Surface) void {
         surface.draw();
+    }
+
+    /// Reinitialize the renderer's GPU resources after a new GL context
+    /// has been made current. This is needed when the host application
+    /// reparents the surface widget (e.g. split/close in a GTK app).
+    /// Returns 0 on success, non-zero on failure.
+    export fn ghostty_surface_renderer_realize(surface: *Surface) c_int {
+        surface.core_surface.renderer.displayRealized() catch |err| {
+            log.err("renderer realize failed err={}", .{err});
+            return 1;
+        };
+        return 0;
+    }
+
+    /// Tear down the renderer's GPU resources before the current GL
+    /// context is destroyed. Call this before reparenting or destroying
+    /// the GL surface so resources can be cleanly recreated.
+    export fn ghostty_surface_renderer_unrealize(surface: *Surface) void {
+        surface.core_surface.renderer.displayUnrealized();
     }
 
     /// Update the size of a surface. This will trigger resize notifications

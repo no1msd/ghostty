@@ -10,6 +10,9 @@ const LipoStep = @import("LipoStep.zig");
 /// The step that generates the file.
 step: *std.Build.Step,
 
+/// The underlying compile step (if available) for artifact registration.
+compile: ?*std.Build.Step.Compile = null,
+
 /// The final static library file
 output: std.Build.LazyPath,
 dsym: ?std.Build.LazyPath,
@@ -104,6 +107,7 @@ pub fn initShared(
 
     return .{
         .step = &lib.step,
+        .compile = lib,
         .output = lib.getEmittedBin(),
         .dsym = dsymutil,
     };
