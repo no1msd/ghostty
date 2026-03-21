@@ -49,6 +49,7 @@ pub fn initStatic(
 
     if (!deps.config.target.result.os.tag.isDarwin()) return .{
         .step = &lib.step,
+        .compile = lib,
         .output = lib.getEmittedBin(),
         .dsym = null,
     };

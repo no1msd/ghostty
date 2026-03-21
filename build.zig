@@ -143,9 +143,14 @@ pub fn build(b: *std.Build) !void {
             libghostty_shared.install("libghostty.so");
             libghostty_static.install("libghostty.a");
 
-            // Register the shared lib as a build artifact so downstream
-            // dependencies can find it via artifact("ghostty").
+            // Register both shared and static libs as build artifacts so
+            // downstream dependencies can use artifact("ghostty") or
+            // artifact("ghostty_static").
             if (libghostty_shared.compile) |compile| {
+                b.installArtifact(compile);
+            }
+            if (libghostty_static.compile) |compile| {
+                compile.name = "ghostty_static";
                 b.installArtifact(compile);
             }
         }
