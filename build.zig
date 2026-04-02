@@ -15,7 +15,23 @@ pub fn build(b: *std.Build) !void {
     // want to know what options are available, you can run `--help` or
     // you can read `src/build/Config.zig`.
 
-    const config = try buildpkg.Config.init(b, appVersion);
+    var config = try buildpkg.Config.init(b, appVersion);
+
+    // When used as a library dependency, the consumer can disable
+    // macOS-specific build artifacts that require Xcode (XCFramework,
+    // macOS app, Metal shader compilation).
+    const skip_macos_artifacts = b.option(
+        bool,
+        "skip-macos-artifacts",
+        "Skip building macOS-specific artifacts (XCFramework, macOS app, Metal shaders). " ++
+            "Useful when building libghostty as a dependency without Xcode.",
+    ) orelse false;
+
+
+    if (skip_macos_artifacts and config.renderer == .metal) {
+        config.renderer = .opengl;
+    }
+
     const test_filters = b.option(
         [][]const u8,
         "test-filter",
@@ -149,44 +165,49 @@ pub fn build(b: *std.Build) !void {
             if (libghostty_shared.compile) |compile| {
                 b.installArtifact(compile);
             }
-            if (libghostty_static.compile) |compile| {
-                compile.name = "ghostty_static";
-                b.installArtifact(compile);
-            }
+        }
+
+        // Register the static lib artifact on all platforms so downstream
+        // consumers (e.g. seance) can use artifact("ghostty_static").
+        if (libghostty_static.compile) |compile| {
+            compile.name = "ghostty_static";
+            b.installArtifact(compile);
         }
     }
 
     // macOS only artifacts. These will error if they're initialized for
     // other targets.
-    if (config.target.result.os.tag.isDarwin()) {
-        // Ghostty xcframework
-        const xcframework = try buildpkg.GhosttyXCFramework.init(
-            b,
-            &deps,
-            config.xcframework_target,
-        );
-        if (config.emit_xcframework) {
-            xcframework.install();
+    if (config.target.result.os.tag.isDarwin() and !skip_macos_artifacts) {
+        if (config.emit_xcframework or config.emit_macos_app) {
+            // Ghostty xcframework
+            const xcframework = try buildpkg.GhosttyXCFramework.init(
+                b,
+                &deps,
+                config.xcframework_target,
+            );
+            if (config.emit_xcframework) {
+                xcframework.install();
 
-            // The xcframework build always installs resources because our
-            // macOS xcode project contains references to them.
-            resources.install();
-            if (i18n) |v| v.install();
-        }
+                // The xcframework build always installs resources because our
+                // macOS xcode project contains references to them.
+                resources.install();
+                if (i18n) |v| v.install();
+            }
 
-        // Ghostty macOS app
-        const macos_app = try buildpkg.GhosttyXcodebuild.init(
-            b,
-            &config,
-            .{
-                .xcframework = &xcframework,
-                .docs = &docs,
-                .i18n = if (i18n) |v| &v else null,
-                .resources = &resources,
-            },
-        );
-        if (config.emit_macos_app) {
-            macos_app.install();
+            // Ghostty macOS app
+            if (config.emit_macos_app) {
+                const macos_app = try buildpkg.GhosttyXcodebuild.init(
+                    b,
+                    &config,
+                    .{
+                        .xcframework = &xcframework,
+                        .docs = &docs,
+                        .i18n = if (i18n) |v| &v else null,
+                        .resources = &resources,
+                    },
+                );
+                macos_app.install();
+            }
         }
     }
 
@@ -213,7 +234,7 @@ pub fn build(b: *std.Build) !void {
 
         // On macOS we can run the macOS app. For "run" we always force
         // a native-only build so that we can run as quickly as possible.
-        if (config.target.result.os.tag.isDarwin()) {
+        if (config.target.result.os.tag.isDarwin() and config.emit_macos_app and !skip_macos_artifacts) {
             const xcframework_native = try buildpkg.GhosttyXCFramework.init(
                 b,
                 &deps,

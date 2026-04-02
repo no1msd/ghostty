@@ -82,12 +82,12 @@ fn initTarget(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
 ) !void {
-    // Update our metallib
-    self.metallib = .create(b, .{
+    // Update our metallib (only needed for Metal renderer)
+    self.metallib = if (self.config.renderer == .metal) .create(b, .{
         .name = "Ghostty",
         .target = target,
         .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
-    });
+    }) else null;
 
     // Change our config
     const config = try b.allocator.create(Config);
@@ -380,11 +380,12 @@ pub fn add(
     if (step.rootModuleTarget().os.tag.isDarwin()) {
         try @import("apple_sdk").addPaths(b, step);
 
-        const metallib = self.metallib.?;
-        metallib.output.addStepDependencies(&step.step);
-        step.root_module.addAnonymousImport("ghostty_metallib", .{
-            .root_source_file = metallib.output,
-        });
+        if (self.metallib) |metallib| {
+            metallib.output.addStepDependencies(&step.step);
+            step.root_module.addAnonymousImport("ghostty_metallib", .{
+                .root_source_file = metallib.output,
+            });
+        }
     }
 
     // Other dependencies, mostly pure Zig

@@ -64,6 +64,7 @@ pub fn initStatic(
 
     return .{
         .step = libtool.step,
+        .compile = lib,
         .output = libtool.output,
 
         // Static libraries cannot have dSYMs because they aren't linked.
