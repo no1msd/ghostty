@@ -472,6 +472,9 @@ pub fn changeConfig(self: *Termio, td: *ThreadData, config: *DerivedConfig) !voi
             config.image_storage_limit,
         );
     }
+
+    // Wake the renderer so it redraws with the updated palette/colors.
+    self.renderer_wakeup.notify() catch {};
 }
 
 /// Resize the terminal.

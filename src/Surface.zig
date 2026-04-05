@@ -6005,7 +6005,7 @@ fn writeScreenFile(
         .{
             @tagName(loc),
             switch (write_screen.emit) {
-                .plain, .vt => "txt",
+                .plain, .vt, .vt_indexed => "txt",
                 .html => "html",
             },
         },
@@ -6073,14 +6073,14 @@ fn writeScreenFile(
         var formatter: ScreenFormatter = .init(self.io.terminal.screens.active, .{
             .emit = switch (write_screen.emit) {
                 .plain => .plain,
-                .vt => .vt,
+                .vt, .vt_indexed => .vt,
                 .html => .html,
             },
             .unwrap = true,
             .trim = false,
             .background = self.io.terminal.colors.background.get(),
             .foreground = self.io.terminal.colors.foreground.get(),
-            .palette = &self.io.terminal.colors.palette.current,
+            .palette = if (write_screen.emit == .vt_indexed) null else &self.io.terminal.colors.palette.current,
         });
         formatter.content = .{ .selection = sel.ordered(
             self.io.terminal.screens.active,
@@ -6105,7 +6105,7 @@ fn writeScreenFile(
         },
         .open => try self.openUrl(.{
             .kind = switch (write_screen.emit) {
-                .plain, .vt => .text,
+                .plain, .vt, .vt_indexed => .text,
                 .html => .html,
             },
             .url = path,

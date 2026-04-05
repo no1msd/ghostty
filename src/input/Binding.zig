@@ -1092,6 +1092,7 @@ pub const Action = union(enum) {
         pub const Format = enum {
             plain,
             vt,
+            vt_indexed,
             html,
         };
 
