@@ -22,6 +22,19 @@ uucode_tables: std.Build.LazyPath,
 /// Used to keep track of a list of file sources.
 pub const LazyPathList = std.ArrayList(std.Build.LazyPath);
 
+/// `linkSystemLibrary2` that skips static-lib steps. On a static lib,
+/// Zig 0.15 resolves `-l<name>` to the matching `.so` and embeds it as
+/// an archive member, which ld.lld then refuses to read. Downstream
+/// consumers are responsible for linking the system library themselves.
+fn linkSystemLib(
+    step: *std.Build.Step.Compile,
+    name: []const u8,
+    options: std.Build.Module.LinkSystemLibraryOptions,
+) void {
+    if (step.isStaticLibrary()) return;
+    step.linkSystemLibrary2(name, options);
+}
+
 pub fn init(b: *std.Build, cfg: *const Config) !SharedDeps {
     const uucode_tables = blk: {
         const uucode = b.dependency("uucode", .{
@@ -149,8 +162,8 @@ pub fn add(
         );
 
         if (b.systemIntegrationOption("freetype", .{})) {
-            step.linkSystemLibrary2("bzip2", dynamic_link_opts);
-            step.linkSystemLibrary2("freetype2", dynamic_link_opts);
+            linkSystemLib(step, "bzip2", dynamic_link_opts);
+            linkSystemLib(step, "freetype2", dynamic_link_opts);
         } else {
             step.linkLibrary(freetype_dep.artifact("freetype"));
             try static_libs.append(
@@ -174,7 +187,7 @@ pub fn add(
                 harfbuzz_dep.module("harfbuzz"),
             );
             if (b.systemIntegrationOption("harfbuzz", .{})) {
-                step.linkSystemLibrary2("harfbuzz", dynamic_link_opts);
+                linkSystemLib(step, "harfbuzz", dynamic_link_opts);
             } else {
                 step.linkLibrary(harfbuzz_dep.artifact("harfbuzz"));
                 try static_libs.append(
@@ -198,7 +211,7 @@ pub fn add(
             );
 
             if (b.systemIntegrationOption("fontconfig", .{})) {
-                step.linkSystemLibrary2("fontconfig", dynamic_link_opts);
+                linkSystemLib(step, "fontconfig", dynamic_link_opts);
             } else {
                 step.linkLibrary(fontconfig_dep.artifact("fontconfig"));
                 try static_libs.append(
@@ -250,7 +263,7 @@ pub fn add(
             oniguruma_dep.module("oniguruma"),
         );
         if (b.systemIntegrationOption("oniguruma", .{})) {
-            step.linkSystemLibrary2("oniguruma", dynamic_link_opts);
+            linkSystemLib(step, "oniguruma", dynamic_link_opts);
         } else {
             step.linkLibrary(oniguruma_dep.artifact("oniguruma"));
             try static_libs.append(
@@ -267,8 +280,9 @@ pub fn add(
     })) |glslang_dep| {
         step.root_module.addImport("glslang", glslang_dep.module("glslang"));
         if (b.systemIntegrationOption("glslang", .{})) {
-            step.linkSystemLibrary2("glslang", dynamic_link_opts);
-            step.linkSystemLibrary2(
+            linkSystemLib(step, "glslang", dynamic_link_opts);
+            linkSystemLib(
+                step,
                 "glslang-default-resource-limits",
                 dynamic_link_opts,
             );
@@ -291,7 +305,7 @@ pub fn add(
             spirv_cross_dep.module("spirv_cross"),
         );
         if (b.systemIntegrationOption("spirv-cross", .{})) {
-            step.linkSystemLibrary2("spirv-cross-c-shared", dynamic_link_opts);
+            linkSystemLib(step, "spirv-cross-c-shared", dynamic_link_opts);
         } else {
             step.linkLibrary(spirv_cross_dep.artifact("spirv_cross"));
             try static_libs.append(
