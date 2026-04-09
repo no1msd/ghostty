@@ -100,7 +100,11 @@ pub fn build(b: *std.Build) !void {
             });
 
             if (b.systemIntegrationOption("freetype", .{})) {
-                lib.linkSystemLibrary2("freetype2", dynamic_link_opts);
+                // Include paths only; Zig 0.15 embeds .so in static archives.
+                const ft = b.dependency("freetype", .{ .target = target, .optimize = optimize, .@"enable-libpng" = true });
+                if (ft.builder.lazyDependency("freetype", .{})) |ft_upstream| {
+                    lib.addIncludePath(ft_upstream.path("include"));
+                }
             } else {
                 const freetype_dep = b.dependency("freetype", .{
                     .target = target,

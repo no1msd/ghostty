@@ -64,7 +64,14 @@ pub fn build(b: *std.Build) !void {
     }
 
     if (b.systemIntegrationOption("harfbuzz", .{})) {
-        module.linkSystemLibrary("harfbuzz", dynamic_link_opts);
+        // Include paths only; Zig 0.15 embeds .so in static archives.
+        if (b.lazyDependency("harfbuzz", .{})) |upstream| {
+            module.addIncludePath(upstream.path("src"));
+        }
+        // hb-ft.h needs freetype headers too
+        if (freetype.builder.lazyDependency("freetype", .{})) |ft_upstream| {
+            module.addIncludePath(ft_upstream.path("include"));
+        }
         test_exe.linkSystemLibrary2("harfbuzz", dynamic_link_opts);
     } else {
         const lib = try buildLib(b, module, .{
@@ -109,8 +116,6 @@ fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Bu
         try apple_sdk.addPaths(b, lib);
     }
 
-    const dynamic_link_opts = options.dynamic_link_opts;
-
     var flags: std.ArrayList([]const u8) = .empty;
     defer flags.deinit(b.allocator);
     try flags.appendSlice(b.allocator, &.{
@@ -138,8 +143,10 @@ fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Bu
         });
 
         if (b.systemIntegrationOption("freetype", .{})) {
-            lib.linkSystemLibrary2("freetype2", dynamic_link_opts);
-            module.linkSystemLibrary("freetype2", dynamic_link_opts);
+            // Include paths only; Zig 0.15 embeds .so in static archives.
+            if (freetype.builder.lazyDependency("freetype", .{})) |ft_upstream| {
+                lib.addIncludePath(ft_upstream.path("include"));
+            }
         } else {
             lib.linkLibrary(freetype.artifact("freetype"));
 

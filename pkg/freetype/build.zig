@@ -37,7 +37,10 @@ pub fn build(b: *std.Build) !void {
     module.addIncludePath(b.path(""));
 
     if (b.systemIntegrationOption("freetype", .{})) {
-        module.linkSystemLibrary("freetype2", dynamic_link_opts);
+        // Include paths only; Zig 0.15 embeds .so in static archives.
+        if (b.lazyDependency("freetype", .{})) |upstream| {
+            module.addIncludePath(upstream.path("include"));
+        }
         if (test_exe) |exe| {
             exe.linkSystemLibrary2("freetype2", dynamic_link_opts);
         }

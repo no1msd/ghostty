@@ -38,8 +38,10 @@ pub fn build(b: *std.Build) !void {
     }
 
     if (b.systemIntegrationOption("oniguruma", .{})) {
-        module.linkSystemLibrary("oniguruma", dynamic_link_opts);
-
+        // Include paths only; Zig 0.15 embeds .so in static archives.
+        if (b.lazyDependency("oniguruma", .{})) |upstream| {
+            module.addIncludePath(upstream.path("src"));
+        }
         if (test_exe) |exe| {
             exe.linkSystemLibrary2("oniguruma", dynamic_link_opts);
         }
