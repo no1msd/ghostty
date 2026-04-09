@@ -40,10 +40,9 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&tests_run.step);
 
     if (b.systemIntegrationOption("fontconfig", .{})) {
-        // Don't `module.linkSystemLibrary` here: it propagates to every
-        // Compile step that imports the module, including static libs,
-        // where Zig embeds the resolved `.so` as an archive member.
-        // Consumers must link fontconfig at the compile-step level.
+        if (b.lazyDependency("fontconfig", .{})) |upstream| {
+            module.addIncludePath(upstream.path(""));
+        }
         test_exe.linkSystemLibrary2("fontconfig", dynamic_link_opts);
     } else {
         const lib = try buildLib(b, module, .{
