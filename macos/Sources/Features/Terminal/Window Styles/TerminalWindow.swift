@@ -157,7 +157,7 @@ class TerminalWindow: NSWindow {
 
         // Setup the accessory view for tabs that shows our keyboard shortcuts,
         // zoomed state, etc. Note I tried to use SwiftUI here but ran into issues
-        // where buttons were not clickable.
+        // where buttons were not clickable on macOS 15.
         tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
 
         let stackView = NSStackView()
@@ -181,6 +181,10 @@ class TerminalWindow: NSWindow {
 
     override func sendEvent(_ event: NSEvent) {
         if tabTitleEditor.handleMouseDown(event) {
+            return
+        }
+
+        if tabTitleEditor.handleRightMouseDown(event) {
             return
         }
 
