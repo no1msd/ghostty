@@ -18,6 +18,22 @@ Additional Zig 0.16 compatibility: the Linux PTY name lookup declares the libc
 `ptsname_r` ABI directly. Zig 0.16 mistranslates glibc's fortified inline wrapper;
 the direct call retains the explicit buffer size and avoids that wrapper.
 
+Surface shutdown cancels app-mailbox sends before joining the surface's worker
+threads. This prevents a full shared queue from deadlocking window, workspace,
+or pane teardown while the GTK main thread waits for those workers. Cancellation
+is scoped to the closing surface, leaves other producers running, and releases
+owned clipboard/PWD payloads that cannot be delivered. The implementation is in
+`src/Surface.zig`, `src/App.zig`, `src/apprt/surface.zig`, and
+`src/datastruct/blocking_queue.zig`.
+
+Run its queue and payload ownership regressions with:
+
+```sh
+zig build test -Dapp-runtime=none -Dskip-macos-artifacts=true \
+  -Dtest-filter='basic push and pop' -Dtest-filter='timed push' \
+  -Dtest-filter='cancelled push' -Dtest-filter='undelivered surface messages'
+```
+
 Validated on Arch Linux with Zig 0.16.0:
 
 - Normal and `--system` ReleaseSafe builds of Séance.

@@ -100,11 +100,33 @@ pub fn BlockingQueue(
         /// queue (unread items) after the push. A return value of zero
         /// means that the push failed.
         pub fn push(self: *Self, io: std.Io, value: T, timeout: Timeout) Size {
+            return self.pushCancelable(io, value, timeout, null);
+        }
+
+        /// Like push, but fail if this producer has been cancelled. The flag
+        /// must only be changed through cancelPushes and outlive every push
+        /// using it. A failed push leaves ownership of value with the caller.
+        pub fn pushCancelable(
+            self: *Self,
+            io: std.Io,
+            value: T,
+            timeout: Timeout,
+            cancelled: ?*const bool,
+        ) Size {
             self.mutex.lockUncancelable(io);
             defer self.mutex.unlock(io);
 
-            // The
-            if (self.full()) {
+            if (cancelled) |flag| if (flag.*) return 0;
+            // Reuse the deadline after another producer's cancellation wakes
+            // us so timed pushes neither fail early nor extend their timeout.
+            const deadline: std.Io.Timeout = switch (timeout) {
+                .ns => |ns| (std.Io.Timeout{ .duration = .{
+                    .raw = .fromNanoseconds(ns),
+                    .clock = .awake,
+                } }).toDeadline(io),
+                else => .none,
+            };
+            while (self.full()) {
                 switch (timeout) {
                     // If we're not waiting, then we failed to write.
                     .instant => return 0,
@@ -115,26 +137,21 @@ pub fn BlockingQueue(
                         self.cond_not_full.waitUncancelable(io, &self.mutex);
                     },
 
-                    .ns => |ns| {
+                    .ns => {
                         self.not_full_waiters += 1;
                         defer self.not_full_waiters -= 1;
                         compat_thread.waitTimeout(
                             &self.cond_not_full,
                             io,
                             &self.mutex,
-                            .{
-                                .duration = .{
-                                    .raw = .fromNanoseconds(ns),
-                                    .clock = .awake,
-                                },
-                            },
+                            deadline,
                         ) catch return 0;
                     },
                 }
 
-                // If we're still full, then we failed to write. This can
-                // happen in situations where we are interrupted.
-                if (self.full()) return 0;
+                if (cancelled) |flag| if (flag.*) return 0;
+                // Cancellation wakes every producer. Unaffected blocking
+                // producers must keep waiting until there is room for them.
             }
 
             // Add our data and update our accounting
@@ -144,6 +161,15 @@ pub fn BlockingQueue(
             self.len += 1;
 
             return self.len;
+        }
+
+        /// Stop a producer and wake its blocked pushes without closing the
+        /// queue or dropping messages belonging to other producers.
+        pub fn cancelPushes(self: *Self, io: std.Io, cancelled: *bool) void {
+            self.mutex.lockUncancelable(io);
+            defer self.mutex.unlock(io);
+            cancelled.* = true;
+            self.cond_not_full.broadcast(io);
         }
 
         /// Pop a value from the queue without blocking.
@@ -258,4 +284,91 @@ test "timed push" {
 
     // Timed push should fail
     try testing.expectEqual(@as(Q.Size, 0), q.push(io, 2, .{ .ns = 1000 }));
+}
+
+test "cancelled push releases a blocked producer and rejects later sends" {
+    const testing = std.testing;
+    const io = testing.io;
+    const Q = BlockingQueue(u64, 1);
+    var q: Q = .{};
+    var cancelled = false;
+    var result: Q.Size = undefined;
+    const Producer = struct {
+        fn run(queue: *Q, flag: *bool, out: *Q.Size) void {
+            out.* = queue.pushCancelable(std.testing.io, 2, .forever, flag);
+        }
+    };
+
+    try testing.expectEqual(1, q.push(io, 1, .instant));
+    const thread = try std.Thread.spawn(.{}, Producer.run, .{ &q, &cancelled, &result });
+    var joined = false;
+    defer if (!joined) {
+        q.cancelPushes(io, &cancelled);
+        thread.join();
+    };
+    try waitForBlockedPushes(&q, 1);
+    q.cancelPushes(io, &cancelled);
+    thread.join();
+    joined = true;
+    try testing.expectEqual(0, result);
+    try testing.expectEqual(1, q.pop(io).?);
+    try testing.expectEqual(0, q.pushCancelable(io, 3, .instant, &cancelled));
+    try testing.expectEqual(0, q.pushCancelable(io, 3, .forever, &cancelled));
+    try testing.expectEqual(0, q.pushCancelable(io, 3, .{ .ns = 1000 }, &cancelled));
+    try testing.expect(q.pop(io) == null);
+}
+
+test "cancelled push preserves other producers and queued messages" {
+    const testing = std.testing;
+    const io = testing.io;
+    const Q = BlockingQueue(u64, 1);
+    const Producer = struct {
+        fn run(queue: *Q, flag: ?*bool, timeout: Q.Timeout, out: *Q.Size) void {
+            out.* = queue.pushCancelable(std.testing.io, 2, timeout, flag);
+        }
+    };
+    // Both indefinitely blocked and timed producers must survive the broadcast.
+    for ([_]Q.Timeout{ .forever, .{ .ns = 5 * std.time.ns_per_s } }) |timeout| {
+        var q: Q = .{};
+        var cancelled = false;
+        var cancelled_result: Q.Size = undefined;
+        var live_result: Q.Size = undefined;
+        try testing.expectEqual(1, q.push(io, 1, .instant));
+        const closing = try std.Thread.spawn(.{}, Producer.run, .{ &q, &cancelled, Q.Timeout.forever, &cancelled_result });
+        var closing_joined = false;
+        defer if (!closing_joined) {
+            q.cancelPushes(io, &cancelled);
+            closing.join();
+        };
+        const live = try std.Thread.spawn(.{}, Producer.run, .{ &q, null, timeout, &live_result });
+        var live_joined = false;
+        defer if (!live_joined) {
+            q.cancelPushes(io, &cancelled);
+            _ = q.pop(io);
+            live.join();
+        };
+        try waitForBlockedPushes(&q, 2);
+        q.cancelPushes(io, &cancelled);
+        closing.join();
+        closing_joined = true;
+        try testing.expectEqual(0, cancelled_result);
+        try testing.expectEqual(1, q.pop(io).?);
+        live.join();
+        live_joined = true;
+        try testing.expectEqual(1, live_result);
+        try testing.expectEqual(2, q.pop(io).?);
+        try testing.expect(q.pop(io) == null);
+    }
+}
+
+fn waitForBlockedPushes(queue: anytype, count: usize) !void {
+    const io = std.testing.io;
+    for (0..2000) |_| {
+        queue.mutex.lockUncancelable(io);
+        const waiting = queue.not_full_waiters;
+        queue.mutex.unlock(io);
+        if (waiting == count) return;
+        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    }
+    return error.TestTimeout;
 }

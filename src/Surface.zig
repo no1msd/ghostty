@@ -150,6 +150,10 @@ config_conditional_state: configpkg.ConditionalState,
 /// This is used to determine if we need to confirm, hold open, etc.
 child_exited: bool = false,
 
+/// Protected by the app mailbox mutex. Cancelling sends before joining our
+/// threads prevents a full app queue from blocking surface teardown.
+mailbox_cancelled: bool = false,
+
 /// We maintain our focus state and assume we're focused by default.
 /// If we're not initially focused then apprts can call focusCallback
 /// to let us know.
@@ -798,6 +802,8 @@ pub fn init(
 }
 
 pub fn deinit(self: *Surface) void {
+    self.app.mailbox.cancelPushes(global.io(), &self.mailbox_cancelled);
+
     // Stop search thread
     if (self.search) |*s| s.deinit();
 

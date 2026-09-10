@@ -153,6 +153,17 @@ pub const Message = union(enum) {
     /// Selected search index change
     search_selected: ?usize,
 
+    /// Release a message that will not be delivered to its surface.
+    pub fn deinit(self: Message) void {
+        switch (self) {
+            .clipboard_write => |v| v.req.deinit(),
+            .pwd_change => |v| v.deinit(),
+            .kitty_clipboard_read => |v| v.destroy(),
+            .kitty_clipboard_write => |v| v.destroy(),
+            else => {},
+        }
+    }
+
     pub const ReportTitleStyle = enum {
         csi_21_t,
 
@@ -181,7 +192,9 @@ pub const Mailbox = struct {
     surface: *Surface,
     app: App.Mailbox,
 
-    /// Send a message to the surface.
+    /// Send a message to the surface. A forever send takes ownership even if
+    /// shutdown cancels it; instant/timed failures leave ownership with the
+    /// caller so it can retry or release the message.
     pub fn push(
         self: Mailbox,
         msg: Message,
@@ -190,12 +203,18 @@ pub const Mailbox = struct {
         // Surface message sending is actually implemented on the app
         // thread, so we have to rewrap the message with our surface
         // pointer and send it to the app thread.
-        return self.app.push(.{
+        const result = self.app.pushCancelable(.{
             .surface_message = .{
                 .surface = self.surface,
                 .message = msg,
             },
-        }, timeout);
+        }, timeout, &self.surface.mailbox_cancelled);
+
+        // Forever sends consume the message, including during shutdown.
+        // Instant/timed failure retains ownership so the caller can retry after
+        // releasing the renderer mutex (see StreamHandler.surfaceMessageWriter).
+        if (result == 0 and timeout == .forever) msg.deinit();
+        return result;
     }
 };
 
@@ -314,4 +333,29 @@ test "copyUtf8Z preserves UTF-8 that fits" {
     Message.DesktopNotification.copyUtf8Z(dst.len, &dst, "abcЯ");
 
     try std.testing.expectEqualStrings("abcЯ", std.mem.sliceTo(&dst, 0));
+}
+
+test "undelivered surface messages release owned payloads" {
+    const alloc = std.testing.allocator;
+    const text = "payload" ** 100;
+    const pwd: Message = .{ .pwd_change = try Message.WriteReq.init(alloc, @as([]const u8, text)) };
+    pwd.deinit();
+    const clipboard: Message = .{ .clipboard_write = .{
+        .clipboard_type = .standard,
+        .req = try Message.WriteReq.init(alloc, @as([]const u8, text)),
+    } };
+    clipboard.deinit();
+
+    inline for (.{ apprt.ClipboardRequest.KittyRead, apprt.ClipboardRequest.KittyWrite }) |Request| {
+        var arena: std.heap.ArenaAllocator = .init(alloc);
+        const request = try arena.allocator().create(Request);
+        // Only the owning arena is needed when discarding an undelivered request.
+        request.* = undefined;
+        request.arena = arena;
+        const msg: Message = if (Request == apprt.ClipboardRequest.KittyRead)
+            .{ .kitty_clipboard_read = request }
+        else
+            .{ .kitty_clipboard_write = request };
+        msg.deinit();
+    }
 }
